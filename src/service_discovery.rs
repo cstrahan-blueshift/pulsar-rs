@@ -273,13 +273,14 @@ fn convert_lookup_response(
         ServiceDiscoveryError::NotFound
     })?;
 
-    let broker_url_tls = match response.broker_service_url_tls.as_ref() {
-        Some(u) => Some(Url::parse(u).map_err(|e| {
-            error!("error parsing URL: {:?}", e);
-            ServiceDiscoveryError::NotFound
-        })?),
-        None => None,
-    };
+    // let broker_url_tls = match response.broker_service_url_tls.as_ref() {
+    //     Some(u) => Some(Url::parse(u).map_err(|e| {
+    //         error!("error parsing URL: {:?}", e);
+    //         ServiceDiscoveryError::NotFound
+    //     })?),
+    //     None => None,
+    // };
+    let broker_url_tls = None;
 
     Ok(LookupResponse {
         broker_url,
