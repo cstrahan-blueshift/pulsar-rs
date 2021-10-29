@@ -31,16 +31,22 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
     ) -> Result<BrokerAddress, ServiceDiscoveryError> {
         let topic = topic.into();
         let mut proxied_query = false;
+        trace!("==> Getting base connection\n");
         let mut conn = self.manager.get_base_connection().await?;
+        trace!("==> Established base connection");
+
         let base_url = self.manager.url.clone();
         let mut is_authoritative = false;
         let mut broker_address = self.manager.get_base_address();
+        trace!("==> Resolved broker address: {:?}", broker_address);
 
         let mut current_retries = 0u32;
         let start = std::time::Instant::now();
         let operation_retry_options = self.manager.operation_retry_options.clone();
 
         loop {
+            trace!("==> Looking up topic: {}", topic.to_string());
+
             let response = match conn
                 .sender()
                 .lookup_topic(topic.to_string(), is_authoritative)
@@ -61,6 +67,12 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
                 || response.response
                     == Some(command_lookup_topic_response::LookupType::Failed as i32)
             {
+                if response.response.is_none() {
+                    trace!("==> Response is none");
+                } else if response.response == Some(command_lookup_topic_response::LookupType::Failed as i32) {
+                    trace!("==> Response is Failed");
+                }
+
                 let error = response.error.and_then(crate::error::server_error);
                 if error == Some(crate::message::proto::ServerError::ServiceNotReady) {
                     if operation_retry_options.max_retries.is_none()
@@ -111,6 +123,8 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
                 connection_url.clone()
             };
 
+            trace!("==> URL: {}", url);
+
             let broker_url = match broker_url_tls {
                 Some(u) => format!("{}:{}", u.host_str().unwrap(), u.port().unwrap_or(6651)),
                 None => format!(
@@ -120,25 +134,39 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
                 ),
             };
 
+            trace!("==> Broker url to use: {}", broker_url);
+
+
             broker_address = BrokerAddress {
                 url,
                 broker_url,
                 proxy: proxied_query || proxy,
             };
+            trace!("==> Broker address to use: {:?}", broker_address);
 
             // if the response indicated a redirect, do another query
             // to the target broker
             if redirect {
+                trace!("==> Trying to get redirect connection");
                 conn = self.manager.get_connection(&broker_address).await?;
+                trace!("==> Redirect connection established");
+
                 proxied_query = broker_address.proxy;
+                trace!("==> Proxy: {}", proxied_query);
+
                 continue;
             } else {
+                trace!("==> Trying to get NON-redirect connection");
+
                 let res = self
                     .manager
                     .get_connection(&broker_address)
                     .await
                     .map(|_| broker_address)
                     .map_err(ServiceDiscoveryError::Connection);
+
+                trace!("==> NON-Redirect connection established");
+
                 break res;
             }
         }
@@ -152,6 +180,8 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
         let mut connection = self.manager.get_base_connection().await?;
         let topic = topic.into();
 
+        trace!("==> Looking up partitioned topic: {}", topic);
+
         let mut current_retries = 0u32;
         let start = std::time::Instant::now();
         let operation_retry_options = self.manager.operation_retry_options.clone();
@@ -161,8 +191,14 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
                 Ok(res) => res,
                 Err(ConnectionError::Disconnected) => {
                     error!("tried to lookup a topic but connection was closed, reconnecting...");
+                    trace!("==> Getting base connection");
+
                     connection = self.manager.get_base_connection().await?;
-                    connection.sender().lookup_partitioned_topic(&topic).await?
+                    trace!("==> trying sender lookup");
+
+                    let res = connection.sender().lookup_partitioned_topic(&topic).await?;
+                    trace!("==> sender lookup complete");
+                    res
                 }
                 Err(e) => return Err(e.into()),
             };
@@ -228,7 +264,11 @@ impl<Exe: Executor> ServiceDiscovery<Exe> {
         topic: S,
     ) -> Result<Vec<(String, BrokerAddress)>, ServiceDiscoveryError> {
         let topic = topic.into();
+        trace!("==> Looking up partitioned topic: {}", topic);
+
         let partitions = self.lookup_partitioned_topic_number(&topic).await?;
+        trace!("==> Got partitions");
+
         trace!("Partitions for topic {}: {}", &topic, &partitions);
         let topics = match partitions {
             0 => vec![topic],
@@ -280,6 +320,12 @@ fn convert_lookup_response(
         })?),
         None => None,
     };
+
+    trace!("==> Broker url: {}", broker_url);
+    trace!("==> Broker url tls: {:?}", broker_url_tls);
+    trace!("==> Proxy: {}", proxy);
+    trace!("==> Authoritative: {}", authoritative);
+    trace!("==> Redirect: {}", redirect);
 
     Ok(LookupResponse {
         broker_url,

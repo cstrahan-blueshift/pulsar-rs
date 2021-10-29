@@ -202,6 +202,8 @@ impl<Exe: Executor> ConnectionManager<Exe> {
             proxy: false,
         };
 
+        trace!("==> Resolved broker address: {:?}", broker_address);
+
         self.get_connection(&broker_address).await
     }
 
